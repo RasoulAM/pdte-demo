@@ -21,6 +21,15 @@ KEYS_DIR = DEPLOYMENT_DIR / ".fhe_keys"
 CLIENT_DIR = DEPLOYMENT_DIR / "client_dir"
 SERVER_DIR = DEPLOYMENT_DIR / "server_dir"
 
+PARAM_FILE_PATH = "parms_stream"
+KEYS_AND_CT_FILE_PATH = "rl_gal_ctxt_stream"
+CT_SIZE_PATH = "ctxt_size_stream"
+PK_FILE_PATH = "pk_stream"
+SK_FILE_PATH = "sk_stream"
+
+OUTPUT_FILE_PATH = "server_ostream"
+
+
 ALL_DIRS = [KEYS_DIR, CLIENT_DIR, SERVER_DIR]
 
 # Columns that define the target

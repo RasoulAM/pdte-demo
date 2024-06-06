@@ -21,11 +21,10 @@ from utils import (
     load_data,
     pretty_print,
 )
+import sys
+from utils import PARAM_FILE_PATH, KEYS_AND_CT_FILE_PATH, CT_SIZE_PATH, PK_FILE_PATH, OUTPUT_FILE_PATH
 
 from concrete.ml.deployment import FHEModelClient
-
-subprocess.Popen(["uvicorn", "server:app"], cwd=CURRENT_DIR)
-time.sleep(3)
 
 # pylint: disable=c-extension-no-member,invalid-name
 
@@ -141,6 +140,10 @@ def key_gen_fn(user_symptoms: List[str]) -> Dict:
     """
     clean_directory()
 
+    for file in ["keygen", "encrypt", "decrypt"]:
+        subprocess.run(["cp", f"client_permanent/{file}", CLIENT_DIR], cwd=DEPLOYMENT_DIR, check=True)
+
+
     if is_none(user_symptoms):
         print("Error: Please submit your symptoms or select a default disease.")
         return {
@@ -148,7 +151,8 @@ def key_gen_fn(user_symptoms: List[str]) -> Dict:
         }
 
     # Generate a random user ID
-    user_id = np.random.randint(0, 2**32)
+    # user_id = np.random.randint(0, 2**32)
+    user_id = np.random.randint(1, 10**6)
     print(f"Your user ID is: {user_id}....")
 
     client = FHEModelClient(path_dir=DEPLOYMENT_DIR, key_dir=KEYS_DIR / f"{user_id}")
@@ -167,6 +171,8 @@ def key_gen_fn(user_symptoms: List[str]) -> Dict:
         f.write(serialized_evaluation_keys)
 
     serialized_evaluation_keys_shorten_hex = serialized_evaluation_keys.hex()[:INPUT_BROWSER_LIMIT]
+
+    result = subprocess.run(["./keygen", f"{user_id}"], cwd=CLIENT_DIR, check=True)
 
     return {
         error_box2: gr.update(visible=False),
@@ -215,6 +221,13 @@ def encrypt_fn(user_symptoms: np.ndarray, user_id: str) -> None:
     encrypted_quantized_user_symptoms_shorten_hex = encrypted_quantized_user_symptoms.hex()[
         :INPUT_BROWSER_LIMIT
     ]
+
+    input_choice = np.random.randint(0, 5)
+    print(f"Your input choice is: {input_choice}....")
+    for file in [f"input_{input_choice}"]:
+        subprocess.run(["cp", f"client_permanent/{file}", CLIENT_DIR], cwd=DEPLOYMENT_DIR, check=True)
+
+    result = subprocess.run(["./encrypt", f"{user_id}", f"{input_choice}"], cwd=CLIENT_DIR, check=True)
 
     return {
         error_box3: gr.update(visible=False),
@@ -275,6 +288,11 @@ def send_input_fn(user_id: str, user_symptoms: np.ndarray) -> Dict:
     files = [
         ("files", open(encrypted_input_path, "rb")),
         ("files", open(evaluation_key_path, "rb")),
+        ("files", open(f"{CLIENT_DIR}/{PARAM_FILE_PATH}_{user_id}", "rb")),
+        ("files", open(f"{CLIENT_DIR}/{KEYS_AND_CT_FILE_PATH}_{user_id}", "rb")),
+        ("files", open(f"{CLIENT_DIR}/{CT_SIZE_PATH}_{user_id}", "rb")),
+        ("files", open(f"{CLIENT_DIR}/{PK_FILE_PATH}_{user_id}", "rb")),
+        # ("files", open(f"../pdte-in-four/src/build/{SK_FILE_PATH}_{user_id}", "rb")),
     ]
 
     # Send the encrypted input and evaluation key to the server
@@ -374,7 +392,8 @@ def get_output_fn(user_id: str, user_symptoms: np.ndarray) -> Dict:
 
             # Save the encrypted output to bytes in a file as it is too large to pass through
             # regular Gradio buttons (see https://github.com/gradio-app/gradio/issues/1877)
-            encrypted_output_path = CLIENT_DIR / f"{user_id}_encrypted_output"
+            # encrypted_output_path = CLIENT_DIR / f"{user_id}_encrypted_output"
+            encrypted_output_path = CLIENT_DIR / f"{OUTPUT_FILE_PATH}_{user_id}"
 
             with encrypted_output_path.open("wb") as f:
                 f.write(encrypted_output)
@@ -405,7 +424,8 @@ def decrypt_fn(
         }
 
     # Get the encrypted output path
-    encrypted_output_path = CLIENT_DIR / f"{user_id}_encrypted_output"
+    # encrypted_output_path = CLIENT_DIR / f"{user_id}_encrypted_output"
+    encrypted_output_path = CLIENT_DIR / f"{OUTPUT_FILE_PATH}_{user_id}"
 
     if not encrypted_output_path.is_file():
         print("Error in decryption step: Please run the FHE execution, first.")
@@ -422,35 +442,40 @@ def decrypt_fn(
             decrypt_box: None,
         }
 
-    # Load the encrypted output as bytes
-    with encrypted_output_path.open("rb") as f:
-        encrypted_output = f.read()
+    # # Load the encrypted output as bytes
+    # with encrypted_output_path.open("rb") as f:
+    #     encrypted_output = f.read()
 
-    # Retrieve the client API
-    client = FHEModelClient(path_dir=DEPLOYMENT_DIR, key_dir=KEYS_DIR / f"{user_id}")
-    client.load()
+    # # Retrieve the client API
+    # client = FHEModelClient(path_dir=DEPLOYMENT_DIR, key_dir=KEYS_DIR / f"{user_id}")
+    # client.load()
 
-    # Deserialize, decrypt and post-process the encrypted output
-    output = client.deserialize_decrypt_dequantize(encrypted_output)
+    # # Deserialize, decrypt and post-process the encrypted output
+    # output = client.deserialize_decrypt_dequantize(encrypted_output)
 
-    top3_diseases = np.argsort(output.flatten())[-3:][::-1]
-    top3_proba = output[0][top3_diseases]
+    # top3_diseases = np.argsort(output.flatten())[-3:][::-1]
+    # top3_proba = output[0][top3_diseases]
 
-    out = ""
+    # out = ""
 
-    if top3_proba[0] < threshold or abs(top3_proba[0] - top3_proba[1]) < 0.1:
-        out = (
-            "⚠️ The prediction appears uncertain; including more symptoms "
-            "may improve the results.\n\n"
-        )
+    # if top3_proba[0] < threshold or abs(top3_proba[0] - top3_proba[1]) < 0.1:
+    #     out = (
+    #         "⚠️ The prediction appears uncertain; including more symptoms "
+    #         "may improve the results.\n\n"
+    #     )
 
+    # out = (
+    #     f"{out}Given the symptoms you provided: "
+    #     f"{pretty_print(checked_symptoms, case_conversion=str.capitalize, delimiter=', ')}\n\n"
+    #     "Here are the top3 predictions:\n\n"
+    #     f"1. « {get_disease_name(top3_diseases[0])} » with a probability of {top3_proba[0]:.2%}\n"
+    #     f"2. « {get_disease_name(top3_diseases[1])} » with a probability of {top3_proba[1]:.2%}\n"
+    #     f"3. « {get_disease_name(top3_diseases[2])} » with a probability of {top3_proba[2]:.2%}\n"
+    # )
+
+    result = subprocess.run(["./decrypt", f"{user_id}"], cwd=CLIENT_DIR, check=True)
     out = (
-        f"{out}Given the symptoms you provided: "
-        f"{pretty_print(checked_symptoms, case_conversion=str.capitalize, delimiter=', ')}\n\n"
-        "Here are the top3 predictions:\n\n"
-        f"1. « {get_disease_name(top3_diseases[0])} » with a probability of {top3_proba[0]:.2%}\n"
-        f"2. « {get_disease_name(top3_diseases[1])} » with a probability of {top3_proba[1]:.2%}\n"
-        f"3. « {get_disease_name(top3_diseases[2])} » with a probability of {top3_proba[2]:.2%}\n"
+        f"Predicted"
     )
 
     return {
@@ -493,6 +518,18 @@ def reset_fn():
 
 if __name__ == "__main__":
 
+    SERVER_PORT = 8000
+    _public = False
+
+    if len(sys.argv) > 1:
+        SERVER_PORT = int(sys.argv[1])
+    if len(sys.argv) > 2:
+        _public = True if sys.argv[2].lower() == "public" else False
+    
+    subprocess.Popen(["uvicorn", "server:app", "--port", f"{SERVER_PORT}"], cwd=CURRENT_DIR)
+    time.sleep(3)
+
+
     print("Starting demo ...")
 
     clean_directory()
@@ -503,30 +540,30 @@ if __name__ == "__main__":
 
         # Link + images
         gr.Markdown()
-        gr.Markdown(
-            """
-            <p align="center">
-                <img width=200 src="https://user-images.githubusercontent.com/5758427/197816413-d9cddad3-ba38-4793-847d-120975e1da11.png">
-            </p>
-            """)
-        gr.Markdown()
+        # gr.Markdown(
+        #     """
+        #     <p align="center">
+        #         <img width=200 src="https://user-images.githubusercontent.com/5758427/197816413-d9cddad3-ba38-4793-847d-120975e1da11.png">
+        #     </p>
+        #     """)
+        # gr.Markdown()
         gr.Markdown("""<h2 align="center">Health Prediction On Encrypted Data Using Fully Homomorphic Encryption</h2>""")
+        # gr.Markdown()
+        # gr.Markdown(
+        #     """
+        #     <p align="center">
+        #         <a href="https://github.com/zama-ai/concrete-ml"> <img style="vertical-align: middle; display:inline-block; margin-right: 3px;" width=15 src="https://user-images.githubusercontent.com/5758427/197972109-faaaff3e-10e2-4ab6-80f5-7531f7cfb08f.png">Concrete-ML</a>
+        #         —
+        #         <a href="https://docs.zama.ai/concrete-ml"> <img style="vertical-align: middle; display:inline-block; margin-right: 3px;" width=15 src="https://user-images.githubusercontent.com/5758427/197976802-fddd34c5-f59a-48d0-9bff-7ad1b00cb1fb.png">Documentation</a>
+        #         —
+        #         <a href="https://zama.ai/community"> <img style="vertical-align: middle; display:inline-block; margin-right: 3px;" width=15 src="https://user-images.githubusercontent.com/5758427/197977153-8c9c01a7-451a-4993-8e10-5a6ed5343d02.png">Community</a>
+        #         —
+        #         <a href="https://twitter.com/zama_fhe"> <img style="vertical-align: middle; display:inline-block; margin-right: 3px;" width=15 src="https://user-images.githubusercontent.com/5758427/197975044-bab9d199-e120-433b-b3be-abd73b211a54.png">@zama_fhe</a>
+        #     </p>
+        #     """)
         gr.Markdown()
         gr.Markdown(
             """
-            <p align="center">
-                <a href="https://github.com/zama-ai/concrete-ml"> <img style="vertical-align: middle; display:inline-block; margin-right: 3px;" width=15 src="https://user-images.githubusercontent.com/5758427/197972109-faaaff3e-10e2-4ab6-80f5-7531f7cfb08f.png">Concrete-ML</a>
-                —
-                <a href="https://docs.zama.ai/concrete-ml"> <img style="vertical-align: middle; display:inline-block; margin-right: 3px;" width=15 src="https://user-images.githubusercontent.com/5758427/197976802-fddd34c5-f59a-48d0-9bff-7ad1b00cb1fb.png">Documentation</a>
-                —
-                <a href="https://zama.ai/community"> <img style="vertical-align: middle; display:inline-block; margin-right: 3px;" width=15 src="https://user-images.githubusercontent.com/5758427/197977153-8c9c01a7-451a-4993-8e10-5a6ed5343d02.png">Community</a>
-                —
-                <a href="https://twitter.com/zama_fhe"> <img style="vertical-align: middle; display:inline-block; margin-right: 3px;" width=15 src="https://user-images.githubusercontent.com/5758427/197975044-bab9d199-e120-433b-b3be-abd73b211a54.png">@zama_fhe</a>
-            </p>
-            """)
-        gr.Markdown()
-        gr.Markdown(
-            """"
             <p align="center">
             <img width="65%" height="25%" src="https://raw.githubusercontent.com/kcelia/Img/main/healthcare_prediction.jpg">
             </p>
@@ -542,10 +579,12 @@ if __name__ == "__main__":
 
         # ------------------------- Step 1 -------------------------
         gr.Markdown("\n")
-        gr.Markdown("## Step 1: Select chief complaints")
+        gr.Markdown("## Step 1: Selecting inputs")
         gr.Markdown("<hr />")
         gr.Markdown("<span style='color:grey'>Client Side</span>")
-        gr.Markdown("Select at least 5 chief complaints from the list below.")
+        gr.Markdown("Not implemented yet...")
+        gr.Markdown("Uses predefined inputs...")
+        # gr.Markdown("Select at least 5 chief complaints from the list below.")
 
         # Step 1.1: Provide symptoms
         check_boxes = []
@@ -766,4 +805,4 @@ if __name__ == "__main__":
             ],
         )
 
-        demo.launch()
+        demo.launch(share=_public)
