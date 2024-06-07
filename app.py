@@ -23,6 +23,7 @@ from utils import (
 )
 import sys
 from utils import PARAM_FILE_PATH, KEYS_AND_CT_FILE_PATH, CT_SIZE_PATH, PK_FILE_PATH, OUTPUT_FILE_PATH
+import ast
 
 from concrete.ml.deployment import FHEModelClient
 
@@ -105,23 +106,12 @@ def get_features_fn(*checked_symptoms: Tuple[str]) -> Dict:
     Returns:
         Dict: The encoded user vector symptoms.
     """
-    if not any(lst for lst in checked_symptoms if lst):
-        return {
-            error_box1: gr.update(visible=True, value="⚠️ Please provide your chief complaints."),
-        }
-
-    if len(pretty_print(checked_symptoms)) < 5:
-        print("Provide at least 5 symptoms.")
-        return {
-            error_box1: gr.update(visible=True, value="⚠️ Provide at least 5 symptoms"),
-            one_hot_vect: None,
-        }
 
     return {
         error_box1: gr.update(visible=False),
         one_hot_vect: gr.update(
             visible=False,
-            value=get_user_symptoms_from_checkboxgroup(pretty_print(checked_symptoms)),
+            value=list(checked_symptoms) #get_user_symptoms_from_checkboxgroup(pretty_print(checked_symptoms)),
         ),
         submit_btn: gr.update(value="Data submitted ✅"),
     }
@@ -143,44 +133,20 @@ def key_gen_fn(user_symptoms: List[str]) -> Dict:
     for file in ["keygen", "encrypt", "decrypt"]:
         subprocess.run(["cp", f"client_permanent/{file}", CLIENT_DIR], cwd=DEPLOYMENT_DIR, check=True)
 
-
-    if is_none(user_symptoms):
-        print("Error: Please submit your symptoms or select a default disease.")
-        return {
-            error_box2: gr.update(visible=True, value="⚠️ Please submit your symptoms first."),
-        }
-
     # Generate a random user ID
     # user_id = np.random.randint(0, 2**32)
     user_id = np.random.randint(1, 10**6)
     print(f"Your user ID is: {user_id}....")
 
-    client = FHEModelClient(path_dir=DEPLOYMENT_DIR, key_dir=KEYS_DIR / f"{user_id}")
-    client.load()
-
-    # Creates the private and evaluation keys on the client side
-    client.generate_private_and_evaluation_keys()
-
-    # Get the serialized evaluation keys
-    serialized_evaluation_keys = client.get_serialized_evaluation_keys()
-    assert isinstance(serialized_evaluation_keys, bytes)
-
-    # Save the evaluation key
-    evaluation_key_path = KEYS_DIR / f"{user_id}/evaluation_key"
-    with evaluation_key_path.open("wb") as f:
-        f.write(serialized_evaluation_keys)
-
-    serialized_evaluation_keys_shorten_hex = serialized_evaluation_keys.hex()[:INPUT_BROWSER_LIMIT]
-
     result = subprocess.run(["./keygen", f"{user_id}"], cwd=CLIENT_DIR, check=True)
 
     return {
         error_box2: gr.update(visible=False),
-        key_box: gr.update(visible=False, value=serialized_evaluation_keys_shorten_hex),
+        # key_box: gr.update(visible=False, value="aaa"),
         user_id_box: gr.update(visible=False, value=user_id),
-        key_len_box: gr.update(
-            visible=False, value=f"{len(serialized_evaluation_keys) / (10**6):.2f} MB"
-        ),
+        # key_len_box: gr.update(
+        #     visible=False, value=f"?? MB"
+        # ),
         gen_key_btn: gr.update(value="Keys have been generated ✅")
     }
 
@@ -204,35 +170,25 @@ def encrypt_fn(user_symptoms: np.ndarray, user_id: str) -> None:
             )
         }
 
-    # Retrieve the client API
-    client = FHEModelClient(path_dir=DEPLOYMENT_DIR, key_dir=KEYS_DIR / f"{user_id}")
-    client.load()
+    # input_choice = np.random.randint(0, 5)
+    input_choice = 0
+    # print(f"Your input choice is: {input_choice}....")
+    # for file in [f"input_{input_choice}"]:
+    #     subprocess.run(["cp", f"client_permanent/{file}", CLIENT_DIR], cwd=DEPLOYMENT_DIR, check=True)
 
-    user_symptoms = np.fromstring(user_symptoms[2:-2], dtype=int, sep=".").reshape(1, -1)
-    # quant_user_symptoms = client.model.quantize_input(user_symptoms)
 
-    encrypted_quantized_user_symptoms = client.quantize_encrypt_serialize(user_symptoms)
-    assert isinstance(encrypted_quantized_user_symptoms, bytes)
-    encrypted_input_path = KEYS_DIR / f"{user_id}/encrypted_input"
 
-    with encrypted_input_path.open("wb") as f:
-        f.write(encrypted_quantized_user_symptoms)
-
-    encrypted_quantized_user_symptoms_shorten_hex = encrypted_quantized_user_symptoms.hex()[
-        :INPUT_BROWSER_LIMIT
-    ]
-
-    input_choice = np.random.randint(0, 5)
-    print(f"Your input choice is: {input_choice}....")
-    for file in [f"input_{input_choice}"]:
-        subprocess.run(["cp", f"client_permanent/{file}", CLIENT_DIR], cwd=DEPLOYMENT_DIR, check=True)
-
+    with open(f'{CLIENT_DIR}/input_0', 'w') as file:
+        # Write each integer on a new line
+        features = ast.literal_eval(user_symptoms)
+        for integer in features:
+            file.write(f'{integer}\n')
     result = subprocess.run(["./encrypt", f"{user_id}", f"{input_choice}"], cwd=CLIENT_DIR, check=True)
 
     return {
         error_box3: gr.update(visible=False),
         one_hot_vect_box: gr.update(visible=True, value=user_symptoms),
-        enc_vect_box: gr.update(visible=True, value=encrypted_quantized_user_symptoms_shorten_hex),
+        # enc_vect_box: gr.update(visible=True, value=encrypted_quantized_user_symptoms_shorten_hex),
     }
 
 
@@ -244,55 +200,17 @@ def send_input_fn(user_id: str, user_symptoms: np.ndarray) -> Dict:
         user_symptoms (np.ndarray): The user symptoms
     """
 
-    if is_none(user_id) or is_none(user_symptoms):
-        return {
-            error_box4: gr.update(
-                visible=True,
-                value="⚠️ Please check your connectivity \n"
-                "⚠️ Ensure that the symptoms have been submitted and the evaluation "
-                "key has been generated before sending the data to the server.",
-            )
-        }
-
-    evaluation_key_path = KEYS_DIR / f"{user_id}/evaluation_key"
-    encrypted_input_path = KEYS_DIR / f"{user_id}/encrypted_input"
-
-    if not evaluation_key_path.is_file():
-        print(
-            "Error Encountered While Sending Data to the Server: "
-            f"The key has been generated correctly - {evaluation_key_path.is_file()=}"
-        )
-
-        return {
-            error_box4: gr.update(visible=True, value="⚠️ Please generate the private key first.")
-        }
-
-    if not encrypted_input_path.is_file():
-        print(
-            "Error Encountered While Sending Data to the Server: The data has not been encrypted "
-            f"correctly on the client side - {encrypted_input_path.is_file()=}"
-        )
-        return {
-            error_box4: gr.update(
-                visible=True,
-                value="⚠️ Please encrypt the data with the private key first.",
-            ),
-        }
-
     # Define the data and files to post
     data = {
         "user_id": user_id,
-        "input": user_symptoms,
+        # "input": user_symptoms,
     }
 
     files = [
-        ("files", open(encrypted_input_path, "rb")),
-        ("files", open(evaluation_key_path, "rb")),
         ("files", open(f"{CLIENT_DIR}/{PARAM_FILE_PATH}_{user_id}", "rb")),
         ("files", open(f"{CLIENT_DIR}/{KEYS_AND_CT_FILE_PATH}_{user_id}", "rb")),
         ("files", open(f"{CLIENT_DIR}/{CT_SIZE_PATH}_{user_id}", "rb")),
         ("files", open(f"{CLIENT_DIR}/{PK_FILE_PATH}_{user_id}", "rb")),
-        # ("files", open(f"../pdte-in-four/src/build/{SK_FILE_PATH}_{user_id}", "rb")),
     ]
 
     # Send the encrypted input and evaluation key to the server
@@ -401,7 +319,7 @@ def get_output_fn(user_id: str, user_symptoms: np.ndarray) -> Dict:
 
 
 def decrypt_fn(
-    user_id: str, user_symptoms: np.ndarray, *checked_symptoms, threshold: int = 0.5
+    user_id: str, user_symptoms: np.ndarray
 ) -> Dict:
     """Dencrypt the data on the `Client Side`.
 
@@ -442,41 +360,15 @@ def decrypt_fn(
             decrypt_box: None,
         }
 
-    # # Load the encrypted output as bytes
-    # with encrypted_output_path.open("rb") as f:
-    #     encrypted_output = f.read()
+    APPROVED_MESSAGE = "Your tumor is benign ✅"
+    DENIED_MESSAGE = "You tumor is malignant ❌"
 
-    # # Retrieve the client API
-    # client = FHEModelClient(path_dir=DEPLOYMENT_DIR, key_dir=KEYS_DIR / f"{user_id}")
-    # client.load()
-
-    # # Deserialize, decrypt and post-process the encrypted output
-    # output = client.deserialize_decrypt_dequantize(encrypted_output)
-
-    # top3_diseases = np.argsort(output.flatten())[-3:][::-1]
-    # top3_proba = output[0][top3_diseases]
-
-    # out = ""
-
-    # if top3_proba[0] < threshold or abs(top3_proba[0] - top3_proba[1]) < 0.1:
-    #     out = (
-    #         "⚠️ The prediction appears uncertain; including more symptoms "
-    #         "may improve the results.\n\n"
-    #     )
-
-    # out = (
-    #     f"{out}Given the symptoms you provided: "
-    #     f"{pretty_print(checked_symptoms, case_conversion=str.capitalize, delimiter=', ')}\n\n"
-    #     "Here are the top3 predictions:\n\n"
-    #     f"1. « {get_disease_name(top3_diseases[0])} » with a probability of {top3_proba[0]:.2%}\n"
-    #     f"2. « {get_disease_name(top3_diseases[1])} » with a probability of {top3_proba[1]:.2%}\n"
-    #     f"3. « {get_disease_name(top3_diseases[2])} » with a probability of {top3_proba[2]:.2%}\n"
-    # )
-
-    result = subprocess.run(["./decrypt", f"{user_id}"], cwd=CLIENT_DIR, check=True)
-    out = (
-        f"Predicted"
-    )
+    result = subprocess.run(["./decrypt", f"{user_id}"], cwd=CLIENT_DIR, stdout=subprocess.PIPE, text=True)
+    output = result.stdout
+    if "Response: 1" in output:
+        out = (APPROVED_MESSAGE)
+    else:
+        out = (DENIED_MESSAGE)
 
     return {
         error_box7: gr.update(visible=False),
@@ -496,8 +388,8 @@ def reset_fn():
         enc_vect_box: gr.update(visible=True, value=None),
         quant_vect_box: gr.update(visible=False, value=None),
         user_id_box: gr.update(visible=False, value=None),
-        default_symptoms: gr.update(visible=True, value=None),
-        default_disease_box: gr.update(visible=True, value=None),
+        # default_symptoms: gr.update(visible=True, value=None),
+        # default_disease_box: gr.update(visible=True, value=None),
         key_box: gr.update(visible=True, value=None),
         key_len_box: gr.update(visible=False, value=None),
         fhe_execution_time_box: gr.update(visible=True, value=None),
@@ -582,57 +474,52 @@ if __name__ == "__main__":
         gr.Markdown("## Step 1: Selecting inputs")
         gr.Markdown("<hr />")
         gr.Markdown("<span style='color:grey'>Client Side</span>")
-        gr.Markdown("Not implemented yet...")
-        gr.Markdown("Uses predefined inputs...")
-        # gr.Markdown("Select at least 5 chief complaints from the list below.")
+        
+        min_max = {
+            "minimum": 0,
+            "maximum": 2**16-1, 
+        }
 
-        # Step 1.1: Provide symptoms
-        check_boxes = []
+        features = []
         with gr.Row():
             with gr.Column():
-                for category in SYMPTOMS_LIST[:3]:
-                    with gr.Accordion(pretty_print(category.keys()), open=False):
-                        check_box = gr.CheckboxGroup(pretty_print(category.values()), show_label=0)
-                        check_boxes.append(check_box)
+                for i in range(10):
+                    features.append(gr.Slider(
+                        minimum=0,
+                        maximum=2**16-1,
+                        step=1, 
+                        label=f"Feature {i}"
+                    ))
             with gr.Column():
-                for category in SYMPTOMS_LIST[3:6]:
-                    with gr.Accordion(pretty_print(category.keys()), open=False):
-                        check_box = gr.CheckboxGroup(pretty_print(category.values()), show_label=0)
-                        check_boxes.append(check_box)
+                for i in range(10):
+                    features.append(gr.Slider(
+                        minimum=0,
+                        maximum=2**16-1,
+                        step=1, 
+                        label=f"Feature {10+i}"
+                    ))
             with gr.Column():
-                for category in SYMPTOMS_LIST[6:]:
-                    with gr.Accordion(pretty_print(category.keys()), open=False):
-                        check_box = gr.CheckboxGroup(pretty_print(category.values()), show_label=0)
-                        check_boxes.append(check_box)
+                for i in range(10):
+                    features.append(gr.Slider(
+                        minimum=0,
+                        maximum=2**16-1,
+                        step=1, 
+                        label=f"Feature {20+i}"
+                    ))
 
         error_box1 = gr.Textbox(label="Error ❌", visible=False)
 
-        # Default disease, picked from the dataframe
-        gr.Markdown(
-            "You can choose an **existing disease** and explore its associated symptoms.",
-            visible=False,
-        )
-
-        with gr.Row():
-            with gr.Column(scale=2):
-                default_disease_box = gr.Dropdown(sorted(diseases), label="Diseases", visible=False)
-            with gr.Column(scale=5):
-                default_symptoms = gr.Textbox(label="Related Symptoms:", visible=False)
         # User vector symptoms encoded in oneHot representation
         one_hot_vect = gr.Textbox(visible=False)
-        # Submit botton
+        # Submit button
         submit_btn = gr.Button("Submit")
         # Clear botton
         clear_button = gr.Button("Reset Space 🔁", visible=False)
 
-        default_disease_box.change(
-            fn=display_default_symptoms_fn, inputs=[default_disease_box], outputs=[default_symptoms]
-        )
-
         submit_btn.click(
             fn=get_features_fn,
-            inputs=[*check_boxes],
-            outputs=[one_hot_vect, error_box1, submit_btn],
+            inputs=[*features],
+            outputs=[error_box1, one_hot_vect, submit_btn],
         )
 
         # ------------------------- Step 2 -------------------------
@@ -756,26 +643,18 @@ if __name__ == "__main__":
 
         decrypt_btn.click(
             decrypt_fn,
-            inputs=[user_id_box, one_hot_vect, *check_boxes],
+            inputs=[user_id_box, one_hot_vect],
             outputs=[decrypt_box, error_box7, submit_btn],
         )
 
         # ------------------------- End -------------------------
 
-        gr.Markdown(
-            """The app was built with [Concrete ML](https://github.com/zama-ai/concrete-ml), a Privacy-Preserving Machine Learning (PPML) open-source set of tools by Zama. 
-            Try it yourself and don't forget to star on [Github](https://github.com/zama-ai/concrete-ml) ⭐.
-            """
-        )
-
-        gr.Markdown("\n\n")
-
-        gr.Markdown(
-            """**Please Note**: This space is intended solely for educational and demonstration purposes. 
-           It should not be considered as a replacement for professional medical counsel, diagnosis, or therapy for any health or related issues. 
-           Any questions or concerns about your individual health should be addressed to your doctor or another qualified healthcare provider.
-            """
-        )
+        # gr.Markdown(
+        #     """**Please Note**: This space is intended solely for educational and demonstration purposes. 
+        #    It should not be considered as a replacement for professional medical counsel, diagnosis, or therapy for any health or related issues. 
+        #    Any questions or concerns about your individual health should be addressed to your doctor or another qualified healthcare provider.
+        #     """
+        # )
 
         clear_button.click(
             reset_fn,
@@ -790,8 +669,8 @@ if __name__ == "__main__":
                 error_box5,
                 error_box6,
                 error_box7,
-                default_disease_box,
-                default_symptoms,
+                # default_disease_box,
+                # default_symptoms,
                 user_id_box,
                 key_len_box,
                 key_box,
@@ -801,7 +680,7 @@ if __name__ == "__main__":
                 srv_resp_retrieve_data_box,
                 fhe_execution_time_box,
                 decrypt_box,
-                *check_boxes,
+                *features,
             ],
         )
 
